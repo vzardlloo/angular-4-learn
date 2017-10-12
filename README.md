@@ -737,6 +737,445 @@ export class InlineCkeditorDirective {
 
 ----
 
+#### 动态组件的使用。
+
+来到这一章节。说明你遇到了一些需求问题
+
+需求：根据后端返回的一些数据。动态的渲染一些组件。甚至说进行一些值的绑定。然后在进行渲染。
+
+废话少说。直接开始
+
+我们先把要渲染的动态组件生成好
+
+```
+ng g component gay
+ng g component hero
+
+```
+
+创建一个gay 和一个hero。用作我们动态渲染的组件。cli会自动帮我们加入module。不过这里要注意一点。
+
+我们需要额外加点东西。
+
+在app.module.ts中
+
+```js
+@NgModule({
+  declarations: [
+    AppComponent, InlineCkeditorDirective, BoyComponent, GirlComponent, GayComponent, HeroComponent
+  ],
+  imports: [
+    routing,
+    CommonModule,
+    BrowserModule,
+    FormsModule
+  ],
+  entryComponents:[GayComponent,HeroComponent],
+  providers: [],
+  bootstrap: [AppComponent]
+})
+export class AppModule {
+}
+```
+
+加入  <code>entryComponents:[GayComponent,HeroComponent]</code>
+
+为什么要加呢。stack上解释的很清楚了：
+
+The entryComponents array is used to define only components that are not found in html and created dynamically with ComponentFactoryResolver. Angular needs this hint to find them and compile. All other components should just be listed in the declarations array.
+
+平时也要注意英文的训练。作为装逼王。这点必不可少。
+我来给大家翻译一下。如果大家觉得自己看好费劲，可以参照我的插件 <a href='https://github.com/icepoint0/blade-translate'>blade-translate</a>
+
+入口组件数组呢是用来定义那些用 <em>ComponentFactoryResolver</em> 创建出来的组件。需要angular 找到并且编译。 这个就是declare 和这个区别了。
+
+言归正传。我们继续
+
+创建一个service。作为动态创建组件的service
+
+<b>dynamic-section.service.ts</b>
+（代码稍后补充）
+
+创建一个 SectionItem
+
+用来构造组件。以及组件data
+
+section-item.ts:
+
+```js
+import {Type} from '@angular/core';
+
+export class SectionItem {
+  constructor(public component: Type<any>, public data: any) {
+  }
+}
+```
+
+我们还要创建一个接口 用来定义我们的动态组件的范型
+
+custom-section-interface.ts:
+
+```js
+export interface CustomSection {
+  content: any
+}
+```
+
+这里内容给any类型。也可以自己构造类型。
+
+接口实现了，要给我们的gay 和hero 实现它
+
+```js
+export class GayComponent implements OnInit,CustomSection {
+  content: any;
+
+  constructor() { }
+
+  ngOnInit() {
+  }
+
+}
+
+```
+
+hero同上
+
+
+别忘了 为了后期好维护。我们要自己构建一个hash const。
+
+section-factory:
+
+```js
+import {GayComponent} from "./gay/gay.component";
+import {HeroComponent} from "./hero/hero.component";
+
+const sections = {
+  "gay": GayComponent,
+  "hero": HeroComponent
+}
+
+
+export class SectionFactory {
+
+
+  buildSection = (name, options) => {
+    return sections[name](options)
+  }
+
+  get = (name) => {
+    return sections[name]
+  }
+
+}
+```
+为了加载我们的组件。我们还需要创建一个容器。用来create
+
+```
+ng g component section-wrapper
+
+
+```
+修改组件内容 加入构造器，<b>ViewContainerRef</b>
+
+```
+import {Component, OnInit, ViewContainerRef} from '@angular/core';
+
+@Component({
+  selector: 'app-section-wrapper',
+  templateUrl: './section-wrapper.component.html',
+  styleUrls: ['./section-wrapper.component.css']
+})
+export class SectionWrapperComponent implements OnInit {
+
+  constructor(public view_container_ref:ViewContainerRef) { }
+
+  ngOnInit() {
+  }
+
+}
+
+
+```
+
+好了 基础工作都做完了。
+现在要进行动态渲染服务的编写了。
+
+**回到我们的 `dynamic-section.service.ts`**
+
+加入构造器：
+
+```js
+ constructor(private componentFactoryResolver: ComponentFactoryResolver) {
+  }
+```
+载入组件方法
+
+```js
+ loadComponent(viewContainerRef: ViewContainerRef, sectionItem: SectionItem) {
+    let componentFactory = this.componentFactoryResolver
+      .resolveComponentFactory(sectionItem.component);
+    let componentRef = viewContainerRef.createComponent(componentFactory);
+    let custom_section: CustomSection = <CustomSection>componentRef.instance;
+    custom_section.content = sectionItem.data;
+  }
+```
+
+解释下这个方法。
+
+入参
+
+`viewContainerRef`：之前章节有提过。视图容器引用
+
+`sectionItem`：我们刚才编写的组件构造器。用来包容组件和data的
+
+方法第1，2行。表示我们要通过工厂创建一个组件。并且在视图容器中加载
+
+然后第三行。拿到这个组件的instance(实例)
+
+第四行把data赋值进去 这样就成功的给一个 ref 创建了一个组件child。
+
+继续添加方法:
+
+```js
+ clearComponent(viewContainerRef: ViewContainerRef) {
+    viewContainerRef.clear();
+  }
+
+  removeComponent(viewContainerRef: ViewContainerRef, index: number) {
+    viewContainerRef.remove(index)
+  }
+
+
+  getAllSection(contents) {
+    //构建工厂
+    let section_factory = new SectionFactory()
+    let sections = []
+    sections = contents.map(content => {
+      return new SectionItem(section_factory.get(content.category), content)
+    })
+
+    return sections
+  }
+
+  getSection(content){
+    let section_factory = new SectionFactory()
+    return new SectionItem(section_factory.get(content.category), content)
+  }
+```
+
+clear,remove 是自带得api。用来清除容器内部的东西
+
+<b>getAllSection</b>: 是根据我们的contents数组的类型。来map出一个sectionItem数组。
+
+这个稍后回用到。
+
+至此。我们的整个service 就已经写完了。
+
+现在我们要运用它
+
+创建一个组件。
+
+```
+ng g gay-and-hero
+
+```
+
+在该组件对应的页面模板中添加
+
+```html
+<p>
+  <strong>基佬英雄产生器</strong>
+</p>
+
+<div>
+  <button (click)="add('gay')">添加gay</button>
+  <button (click)="add('hero')">添加hero</button>
+</div>
+
+<app-section-wrapper>
+
+</app-section-wrapper>
+
+```
+
+这里就要对应的添加方法了。
+
+注意此处，我们把`<app-section-wrapper>` 加入了进来。 
+
+所以对应的我们需要用到它，获得他的引用：
+在组件中添加
+
+```
+ @ViewChild(SectionWrapperComponent)
+  private SectionContainer: SectionWrapperComponent;
+
+```
+
+之后在组件中添加方法add:
+
+```js
+ add(type: string) {
+
+    let content = {name: '我是gay吗', category: type}
+    let section = this.dynamic_section_service.getSection(content)
+    this.dynamic_section_service.loadComponent(this.SectionContainer.view_container_ref, section)
+
+  }
+
+```
+
+这里的content只是单纯的构造一个hash
+
+。再回头看看我们的gay 和 hero 模板：
+
+```html
+gay:
+<p>
+  gay works!
+</p>
+
+hero:
+<p>
+  hero works!
+</p>
+```
+
+这里其实可以加一行
+
+判断我们的content是否真的赋值成功了
+
+```
+<p>
+  gay works! {{content.category}}
+</p>
+```
+
+
+然后再在页面中点击按钮。会发现在容器中会添加我们要的组件。
+
+
+#### 章节结尾说明
+
+这里额外说一点。动态组件的需求说多不多 说少不少。个人建议有必要掌握。如stringkly那种模式。
+
+----
+
+
+### Angular CLI 相关实践
+
+#### 跨域解决
+
+跨域是浏览器行为。解决方式主要有以下两种
+
+##### 1.本机前后端项目端口代理。下面以angular-cli 为例：
+
+在跟项目下创建 proxy.json
+
+以java项目为例 大部分tomcat 端口开放在8080
+
+并且项目接口均以/api 开头。
+
+proxy.json
+
+```json
+{
+  "/api/*": {
+    "target": "http://localhost:8080",
+    "secure": false,
+    "logLevel": "debug"
+  }
+  }
+```
+
+添加完。保存。
+ 
+然后中断我们的项目。在我们的启动命令里 添加一条参数
+
+```
+ "start": "ng serve --proxy-config proxy.json"
+```
+注意。这里仅在开发环境下添加配置。生产环境不需要。
+
+如果是 自己做的webpack配置。目前应该很少了吧。官方都不建议了。
+但是还是给出一份。<a href="https://github.com/icepoint0/angular2-webpack-config">webpack配置</a>
+
+现在讲讲生产环境 即部署环境如何处理。这里涉及到一些服务器知识了。
+有兴趣的朋友可以了解下。不行就交给运维处理。
+
+首先。以 **Nginx** 作为我们的server。 
+
+
+```json
+server{
+...
+location ^~ /api/ {
+                proxy_pass http://127.0.0.1:8080;
+            root /www/public;
+        }
+        ...
+        }
+```
+
+在location 这里加个代理即可。
+
+至于前端项目部署在哪个端口。自行考虑。
+
+##### 2.后端项目做修改。
+
+大部分前端人员比较懒。或者说不懂后端。没关系。交给后端去解决跨域吧
+
+项目设置response 头，即可。具体细节不做赘述
+
+
+### h5移动端开发以及微信配置相关问题
+
+
+这里讲的是微信页面。非web app。
+
+#### 1.微信认证跳转。
+
+微信认证跳转由于需要验证域名。但是我们的域名又是localhost这种形式。那怎么办呢。
+
+----- **修改host**
+
+这里推荐大家一个好用的工具
+ <a href="https://github.com/oldj/SwitchHosts">swicth host</a>
+ 
+ 修改完host 之后。启动项目。会发现报错了。
+ 
+ ```
+ invalid host header
+ ```
+ 
+ 是的 angular-cli 会check 我们的host。没关系 这时候我们再在启动命令里加一行
+ 
+ ```
+ --disable-host-check
+ ```
+ 
+ 这样就可以了。
+ 
+ **记得要把端口改为80.微信连带端口也会一起检测的。**
+ 
+ 接下来就是要真🐔访问我们的项目作为测试。
+ 
+ 这里推荐一款软件 **<a href="https://www.charlesproxy.com/">charles</a>**
+ 
+ 👍 👍 👍 👍 👍 👍 👍 👍 👍
+ 
+ 很赞。未激活每次只有30分钟的寿命。但是也够测试了。不够再重新打开就行
+ 
+ 记得手机代理端口填写8888 在同一局域网内 用 
+ 
+ `ipconfig` / `ifconfig` 检测下当前pc的局域网分配的ip地址就行
+ 
+ 
+ 到这里我们都配置了。相当于在正式环境的本机开发微信移动端了。这种感觉
+ 
+ 😊😊😊😊😊😊😊
+ 
+ 
+
 
 
 
